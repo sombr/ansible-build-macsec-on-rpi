@@ -1,0 +1,67 @@
+- name: Build MacSec module on a RaspberryPI since there's no default one
+  hosts:
+    - localhost
+  vars:
+    kernel_package: linux-source-{{ ansible_kernel | regex_search('(\d+\.\d+\.\d+)') }}
+    build_dir_root: linux-{{ ansible_kernel | regex_search('(\d+\.\d+\.\d+)') }}
+    build_dir_macsec: "{{ build_dir_root }}/drivers/net"
+  tasks:
+    - name: Setup APT source repository
+      become: true
+      ansible.builtin.apt_repository:
+        repo: deb-src http://ports.ubuntu.com/ubuntu-ports {{ ansible_distribution_release }} main restricted universe multiverse
+        state: present
+    - name: Get packages needed for building a kernel
+      become: true
+      ansible.builtin.apt:
+        name:
+          - dpkg-dev
+          - flex
+          - bison
+          - libncurses-dev
+          - gawk
+          - openssl
+          - libssl-dev
+          - dkms
+          - libelf-dev
+          - libudev-dev
+          - libpci-dev
+          - libiberty-dev
+          - autoconf
+          - llvm
+          - linux-headers-{{ ansible_kernel }}
+        update_cache: yes
+        state: latest
+    - name: Get Current Linux Kernel Source
+      ansible.builtin.shell:
+        chdir: /tmp/
+        cmd: apt-get source {{ kernel_package }}
+    - name: Make Oldconfig
+      ansible.builtin.shell:
+        chdir: /tmp/{{ build_dir_root }}
+        cmd: make oldconfig
+    - name: Make Prepare
+      ansible.builtin.shell:
+        chdir: /tmp/{{ build_dir_root }}
+        cmd: make prepare
+    - name: Make Scripts
+      ansible.builtin.shell:
+        chdir: /tmp/{{ build_dir_root }}
+        cmd: make scripts
+    - name: Copy Symbols
+      ansible.builtin.shell:
+        chdir: /tmp/{{ build_dir_root }}
+        cmd: cp -v /usr/src/linux-headers-{{ ansible_kernel }}/Module.symvers .
+    - name: Override Makefile
+      ansible.builtin.copy:
+        dest: /tmp/{{ build_dir_macsec }}/Makefile
+        content: |
+          obj-m += macsec.o
+    - name: Building modules
+      ansible.builtin.shell:
+        chdir: /tmp/{{ build_dir_macsec }}
+        cmd: make -C /lib/modules/{{ ansible_kernel }}/build M=/tmp/{{ build_dir_macsec }}  modules
+    - name: Copy resulting module to current dir
+      ansible.builtin.copy:
+        src: /tmp/{{ build_dir_macsec }}/macsec.ko
+        dest: macsec.ko
